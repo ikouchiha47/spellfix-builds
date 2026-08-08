@@ -1,0 +1,90 @@
+name: Build spellfix1 for Android
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      sqlite_ref:
+        description: "git ref in sqlite/sqlite to build spellfix.c from"
+        default: "master"
+        required: false
+
+env:
+  SQLITE_REF: ${{ github.event.inputs.sqlite_ref || 'master' }}
+  NDK_API_LEVEL: 26
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - abi: arm64-v8a
+            clang_triple: aarch64-linux-android
+          - abi: armeabi-v7a
+            clang_triple: armv7a-linux-androideabi
+          - abi: x86_64
+            clang_triple: x86_64-linux-android
+    steps:
+      - name: Set up NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Fetch spellfix1 source from the official SQLite mirror
+        run: |
+          mkdir src && cd src
+          curl -sSfL -o spellfix.c "https://raw.githubusercontent.com/sqlite/sqlite/${SQLITE_REF}/ext/misc/spellfix.c"
+          curl -sSfL -o sqlite3ext.h "https://raw.githubusercontent.com/sqlite/sqlite/${SQLITE_REF}/src/sqlite3ext.h"
+          # sqlite3.h itself isn't checked into the mirror (it's generated at
+          # SQLite's own build time from sqlite3.h.in) - a loadable
+          # extension only needs its declarations/types, not a version-exact
+          # match, since all real calls go through the sqlite3_api struct
+          # resolved at runtime. apt's libsqlite3-dev header is sufficient.
+          sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-dev
+          cp /usr/include/sqlite3.h .
+
+      - name: Cross-compile libspellfix.so
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.clang_triple }}${NDK_API_LEVEL}-clang"
+          mkdir -p out/${{ matrix.abi }}
+          "$CLANG" -shared -fPIC -O2 \
+            -DSQLITE_CORE=0 \
+            -I src \
+            -o out/${{ matrix.abi }}/libspellfix.so \
+            src/spellfix.c
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libspellfix-${{ matrix.abi }}
+          path: out/${{ matrix.abi }}/libspellfix.so
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package per-ABI tarballs
+        run: |
+          mkdir dist
+          for abi_dir in artifacts/libspellfix-*; do
+            abi="${abi_dir#artifacts/libspellfix-}"
+            tar -czf "dist/spellfix1-android-${abi}.tar.gz" -C "$abi_dir" libspellfix.so
+          done
+          ls -la dist
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

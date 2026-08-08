@@ -1,0 +1,44 @@
+name: Check for spellfix1 source updates
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare upstream spellfix.c commit against last build
+        id: check
+        run: |
+          latest_sha=$(curl -sSfL \
+            "https://api.github.com/repos/sqlite/sqlite/commits?path=ext/misc/spellfix.c&sha=master&per_page=1" \
+            | grep -m1 '"sha"' | cut -d'"' -f4)
+          last_built=$(cat .last-synced-sha 2>/dev/null || echo "")
+          echo "latest=$latest_sha" >> "$GITHUB_OUTPUT"
+          if [ "$latest_sha" = "$last_built" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record new source commit and tag a build
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "spellfix-builds-bot"
+          git config user.email "actions@users.noreply.github.com"
+          echo "${{ steps.check.outputs.latest }}" > .last-synced-sha
+          git add .last-synced-sha
+          git commit -m "sync: upstream spellfix.c changed (${{ steps.check.outputs.latest }})"
+          tag="v$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          git tag "$tag"
+          git push origin HEAD:main
+          git push origin "$tag"
