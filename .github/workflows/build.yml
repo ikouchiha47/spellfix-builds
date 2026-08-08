@@ -57,7 +57,6 @@ jobs:
           CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.clang_triple }}${NDK_API_LEVEL}-clang"
           mkdir -p out/${{ matrix.abi }}
           "$CLANG" -shared -fPIC -O2 \
-            -DSQLITE_CORE=0 \
             -I src \
             -o out/${{ matrix.abi }}/libspellfix.so \
             src/spellfix.c
