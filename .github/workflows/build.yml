@@ -15,6 +15,9 @@ env:
   SQLITE_REF: ${{ github.event.inputs.sqlite_ref || 'master' }}
   NDK_API_LEVEL: 26
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
